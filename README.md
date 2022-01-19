@@ -1,1 +1,1 @@
-# golang-react-chat-app
+# Simple Chat Application using Golang
