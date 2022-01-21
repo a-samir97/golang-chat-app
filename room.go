@@ -1,11 +1,17 @@
 package main
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/google/uuid"
+)
 
 const welcomeMessage = "%s joined the room"
 
 type Room struct {
-	name       string
+	ID         uuid.UUID `json:"id"`
+	Name       string    `json:"name"`
+	Private    bool      `json:"private"`
 	clients    map[*Client]bool
 	register   chan *Client
 	unregister chan *Client
@@ -13,14 +19,26 @@ type Room struct {
 }
 
 // Creata new room
-func NewRoom(name string) *Room {
+func NewRoom(name string, private bool) *Room {
 	return &Room{
-		name:       name,
+		ID:         uuid.New(),
+		Name:       name,
+		Private:    private,
 		clients:    make(map[*Client]bool),
 		register:   make(chan *Client),
 		unregister: make(chan *Client),
 		broadcast:  make(chan *Message),
 	}
+}
+
+// get room id
+func (room *Room) GetId() string {
+	return room.ID.String()
+}
+
+// get room name
+func (room *Room) GetName() string {
+	return room.Name
 }
 
 // Run room, accepting requests
@@ -40,7 +58,9 @@ func (room *Room) RunRoom() {
 // Register a new user to the room
 func (room *Room) registerClient(client *Client) {
 	// notify user
-	room.notifyClientJoined(client)
+	if !room.Private {
+		room.notifyClientJoined(client)
+	}
 	room.clients[client] = true
 }
 
@@ -62,7 +82,7 @@ func (room *Room) broadcastToClients(message []byte) {
 func (room *Room) notifyClientJoined(client *Client) {
 	message := &Message{
 		Action:  SendMessageAction,
-		Target:  room.name,
+		Target:  room,
 		Message: fmt.Sprintf(welcomeMessage, client.GetName()),
 	}
 

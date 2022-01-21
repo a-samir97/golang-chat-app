@@ -10,6 +10,8 @@ const JoinRoomAction = "join-room"
 const LeaveRoomAction = "leave-room"
 const UserJoinredAction = "user-join"
 const UserLeftAction = "user-left"
+const JoinPrivateRoomAction = "join-private-room"
+const RoomJoinedAction = "room-joined"
 
 type Message struct {
 	// Action: what is the action of the message reqesuting
@@ -21,7 +23,7 @@ type Message struct {
 	Message string `json:"message"`
 
 	// target for the message, room for example or someone
-	Target string `json:"target"`
+	Target *Room `json:"target"`
 
 	// who is sending this message ?
 	Sender *Client `json:"sender"`

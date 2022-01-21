@@ -179,23 +179,18 @@ func (client *Client) disconnect() {
 
 // Handle join a new client to room
 func (client *Client) handleJoinRoomMessage(message Message) {
-	roomName := message.Target
+	roomName := message.Message
 
-	room := client.wsServer.findRoomByName(roomName)
-	if room == nil {
-		room = client.wsServer.createRoom(roomName)
-	}
-
-	// store room in client struct with true bool
-	client.rooms[room] = true
-
-	// also register the client in the room
-	room.register <- client
+	client.joinRoom(roomName, nil)
 }
 
 // Handle leave user from room
 func (client *Client) handleLeaveRoomMessage(message Message) {
-	room := client.wsServer.findRoomByName(message.Target)
+	room := client.wsServer.findRoomByID(message.Message)
+
+	if room == nil {
+		return
+	}
 
 	if _, ok := client.rooms[room]; ok {
 		delete(client.rooms, room)
@@ -219,9 +214,9 @@ func (client *Client) handleNewMessage(jsonMessage []byte) {
 	case SendMessageAction:
 		// send messages to specific room now,
 		// which room is the mesasge target here
-		roomName := message.Target
+		roomID := message.Target.GetId()
 		// use this name to find the room
-		if room := client.wsServer.findRoomByName(roomName); room != nil {
+		if room := client.wsServer.findRoomByID(roomID); room != nil {
 			room.broadcast <- &message
 		}
 
@@ -229,5 +224,60 @@ func (client *Client) handleNewMessage(jsonMessage []byte) {
 		client.handleJoinRoomMessage(message)
 	case LeaveRoomAction:
 		client.handleLeaveRoomMessage(message)
+	case JoinPrivateRoomAction:
+		client.handleJoinPrivateRoom(message)
 	}
+}
+
+// joining private room
+// combine IDs of the client and target
+func (client *Client) handleJoinPrivateRoom(message Message) {
+	target := client.wsServer.findClienyByID(message.Message)
+	// if there is no client, will not make the private room
+	if target == nil {
+		return
+	}
+
+	// create a unique room name combined the 2 IDs
+	roomName := message.Message + client.ID.String()
+
+	client.joinRoom(roomName, target)
+	target.joinRoom(roomName, client)
+}
+
+// joining a room for both private and public
+func (client *Client) joinRoom(roomName string, sender *Client) {
+	room := client.wsServer.findRoomByName(roomName)
+	if room == nil {
+		room = client.wsServer.createRoom(roomName, sender != nil)
+	}
+
+	// don't allow to join private rooms through public room message
+	if sender == nil && room.Private {
+		return
+	}
+
+	if !client.InRoom(room) {
+		client.rooms[room] = true
+		room.register <- client
+		client.notifyRoomJoined(room, sender)
+	}
+}
+
+// check if the client in the room or not
+func (client *Client) InRoom(room *Room) bool {
+	if _, ok := client.rooms[room]; ok {
+		return true
+	}
+	return false
+}
+
+// notify the client of the new room he joined
+func (client *Client) notifyRoomJoined(room *Room, sender *Client) {
+	message := Message{
+		Action: RoomJoinedAction,
+		Target: room,
+		Sender: sender,
+	}
+	client.send <- message.encode()
 }

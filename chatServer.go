@@ -60,7 +60,7 @@ func (server *WsServer) unregisterClient(client *Client) {
 func (server *WsServer) findRoomByName(name string) *Room {
 	var foundRoom *Room
 	for room := range server.rooms {
-		if room.name == name {
+		if room.GetName() == name {
 			foundRoom = room
 			break
 		}
@@ -68,9 +68,35 @@ func (server *WsServer) findRoomByName(name string) *Room {
 	return foundRoom
 }
 
+// find room by id
+func (server *WsServer) findRoomByID(ID string) *Room {
+	var foundRoom *Room
+
+	for room := range server.rooms {
+		if room.GetId() == ID {
+			foundRoom = room
+			break
+		}
+	}
+	return foundRoom
+}
+
+// find client by id
+func (server *WsServer) findClienyByID(ID string) *Client {
+	var foundClient *Client
+
+	for client := range server.clients {
+		if client.ID.String() == ID {
+			foundClient = client
+			break
+		}
+	}
+	return foundClient
+}
+
 // create name by passing name
-func (server *WsServer) createRoom(name string) *Room {
-	room := NewRoom(name)
+func (server *WsServer) createRoom(name string, private bool) *Room {
+	room := NewRoom(name, private)
 	go room.RunRoom()
 	server.rooms[room] = true
 	return room
