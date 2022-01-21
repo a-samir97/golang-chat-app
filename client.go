@@ -1,11 +1,13 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 )
 
@@ -40,32 +42,55 @@ var upgrader = websocket.Upgrader{
 
 type Client struct {
 	// actual websocket connection
+	ID       uuid.UUID `json:"id"`
 	conn     *websocket.Conn
 	wsServer *WsServer
 	send     chan []byte
+	rooms    map[*Room]bool
+	Name     string `json:"name"`
 }
 
-func newClient(conn *websocket.Conn, wsServer *WsServer) *Client {
+func newClient(conn *websocket.Conn, wsServer *WsServer, name string) *Client {
 	// new client in the websocket connection
-	return &Client{conn: conn, wsServer: wsServer, send: make(chan []byte, 256)}
+	return &Client{
+		conn:     conn,
+		wsServer: wsServer,
+		send:     make(chan []byte, 256),
+		rooms:    make(map[*Room]bool),
+		Name:     name,
+		ID:       uuid.New(),
+	}
+}
+
+func (client *Client) GetName() string {
+	return client.Name
 }
 
 // handle websocket requests from clients requests
 func ServeWs(wsServer *WsServer, w http.ResponseWriter, r *http.Request) {
 	conn, err := upgrader.Upgrade(w, r, nil)
+	name, ok := r.URL.Query()["name"]
 
 	if err != nil {
 		log.Println(err)
 		return
 	}
+	if !ok || len(name[0]) < 1 {
+		log.Println("URL Param name is missing")
+		return
+	}
+
 	// new client connects to the websocket
-	client := newClient(conn, wsServer)
+	client := newClient(conn, wsServer, name[0])
+
+	go client.writePump()
+	go client.readPump()
 
 	wsServer.register <- client
+
 	fmt.Println("New Client joined the hub")
-	fmt.Println(client)
-	fmt.Printf("%p\n", &client)
-	fmt.Println(wsServer.clients)
+	fmt.Println(client.Name)
+	fmt.Println(client.rooms)
 }
 
 //In the readPump Goroutine,
@@ -73,7 +98,7 @@ func ServeWs(wsServer *WsServer, w http.ResponseWriter, r *http.Request) {
 //It will do so in an endless loop until the client is disconnected.
 func (client *Client) readPump() {
 	defer func() {
-		client.conn.Close()
+		client.disconnect()
 	}()
 
 	client.conn.SetReadLimit(maxMessageSize)
@@ -91,7 +116,7 @@ func (client *Client) readPump() {
 			break
 		}
 
-		client.wsServer.broadcast <- jsonMessage
+		client.handleNewMessage(jsonMessage)
 	}
 }
 
@@ -140,5 +165,69 @@ func (client *Client) writePump() {
 			}
 
 		}
+	}
+}
+
+func (client *Client) disconnect() {
+	client.wsServer.unregister <- client
+	for room := range client.rooms {
+		room.unregister <- client
+	}
+	close(client.send)
+	client.conn.Close()
+}
+
+// Handle join a new client to room
+func (client *Client) handleJoinRoomMessage(message Message) {
+	roomName := message.Target
+
+	room := client.wsServer.findRoomByName(roomName)
+	if room == nil {
+		room = client.wsServer.createRoom(roomName)
+	}
+
+	// store room in client struct with true bool
+	client.rooms[room] = true
+
+	// also register the client in the room
+	room.register <- client
+}
+
+// Handle leave user from room
+func (client *Client) handleLeaveRoomMessage(message Message) {
+	room := client.wsServer.findRoomByName(message.Target)
+
+	if _, ok := client.rooms[room]; ok {
+		delete(client.rooms, room)
+	}
+	room.unregister <- client
+}
+
+// Handle New Message
+func (client *Client) handleNewMessage(jsonMessage []byte) {
+	var message Message
+	// if there is any error while deseralizing the json string to
+	// message object
+	if err := json.Unmarshal(jsonMessage, &message); err != nil {
+		log.Printf("Error on unmarshal JSON message %s", err)
+	}
+
+	// attach the client object as the sender of the message
+	message.Sender = client
+
+	switch message.Action {
+	case SendMessageAction:
+		// send messages to specific room now,
+		// which room is the mesasge target here
+		roomName := message.Target
+		// use this name to find the room
+		if room := client.wsServer.findRoomByName(roomName); room != nil {
+			room.broadcast <- &message
+		}
+
+	case JoinRoomAction:
+		client.handleJoinRoomMessage(message)
+	case LeaveRoomAction:
+		client.handleLeaveRoomMessage(message)
 	}
 }
